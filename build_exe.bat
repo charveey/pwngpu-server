@@ -1,11 +1,32 @@
 @echo off
-REM Builds a standalone PwnGPUCrackServer.exe so the end user doesn't need
-REM Python installed at all.
+setlocal
 
 python -m pip install -r requirements.txt
-python -m pip install pyinstaller
+if errorlevel 1 (
+    echo.
+    echo Failed to install requirements. See errors above.
+    pause
+    exit /b 1
+)
 
-pyinstaller --noconfirm --onefile --windowed --name "PwnGPUCrackServer" main.py
+python -m pip install pyinstaller
+if errorlevel 1 (
+    echo.
+    echo Failed to install PyInstaller. See errors above.
+    pause
+    exit /b 1
+)
+
+REM Call PyInstaller as a module rather than a bare command - this works
+REM even if its Scripts folder isn't on PATH (common with the Microsoft
+REM Store build of Python).
+python -m PyInstaller --noconfirm --onefile --windowed --name "PwnGPUCrackServer" main.py
+if errorlevel 1 (
+    echo.
+    echo Build FAILED - see errors above.
+    pause
+    exit /b 1
+)
 
 echo.
 echo Build complete: dist\PwnGPUCrackServer.exe
