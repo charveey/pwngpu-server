@@ -121,19 +121,29 @@ class HashcatRunner(QObject):
             self.job_finished.emit(job.original_name, 0)
             return
 
-        self.log.emit(f"Hashcat path: {self.settings.hashcat_path}")
-        self.log.emit(f"CWD: {os.path.dirname(self.settings.hashcat_path)}")
-        self.log.emit(f"Command: {' '.join(cmd)}")
+        #DEBUG
+        #self.log.emit(f"Hashcat path: {self.settings.hashcat_path}")
+        #self.log.emit(f"CWD: {os.path.dirname(self.settings.hashcat_path)}")
+        #self.log.emit(f"Command: {' '.join(cmd)}")
+
+        MAX_RUNTIME_SEC = 6 * 3600  # safety cap so one bad job can't wedge the queue forever
+        killer = None
 
         try:
             proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,  
                 text=True,
                 cwd=os.path.dirname(self.settings.hashcat_path),
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
+
+            killer = threading.Timer(MAX_RUNTIME_SEC, self._kill_proc, args=(proc, job.original_name))
+            killer.daemon = True
+            killer.start()
+
             for line in proc.stdout:
                 line = line.rstrip()
                 if line:
@@ -147,9 +157,19 @@ class HashcatRunner(QObject):
             self.log.emit(f"hashcat error: {e}")
             self.job_finished.emit(job.original_name, 0)
             return
+        finally:
+            if killer is not None:
+                killer.cancel()
 
         new_count = self._collect_cracked(job.hash_path)
         self.job_finished.emit(job.original_name, new_count)
+
+    def _kill_proc(self, proc, name):
+        self.log.emit(f"[warn] {name}: hashcat exceeded max runtime ({proc.pid}), killing.")
+        try:
+            proc.kill()
+        except Exception:
+            pass
 
     def _build_command(self, hash_path):
         hc = self.settings.hashcat_path
@@ -215,26 +235,22 @@ class HashcatRunner(QObject):
     @staticmethod
     def _parse_show_line(line: str):
         """
-        `hashcat -m 22000 --show` prints cracked lines shaped like:
-          WPA*02*MIC*BSSID_HEX*STA_HEX*ESSID_HEX*...*...:<password>
-        Split off the trailing password, then pull the BSSID/ESSID back out
-        of the hex-encoded hash fields.
+        hashcat's mode-22000 output (both the live 'cracked' notification and
+        `--show`) looks like:
+            <hash>:<bssid_hex>:<sta_hex>:<essid>:<password>
+        BSSID/STA are 12 hex chars with no separators; ESSID is already
+        plaintext (and may itself contain ':', so we peel hash/bssid/sta off
+        the left and password off the right rather than assuming fixed
+        field count).
         """
-        if not line or ":" not in line:
+        if not line or line.count(":") < 4:
             return None
-        hash_part, password = line.rsplit(":", 1)
-        fields = hash_part.split("*")
-        if len(fields) < 6 or fields[0] != "WPA":
+        try:
+            _hash, bssid_hex, sta_hex, rest = line.split(":", 3)
+            essid, password = rest.rsplit(":", 1)
+        except ValueError:
             return None
-        bssid_hex = fields[3]
-        essid_hex = fields[5]
-        try:
-            bssid = ":".join(bssid_hex[i:i + 2] for i in range(0, len(bssid_hex), 2)).upper()
-        except Exception:
-            bssid = bssid_hex
-        try:
-            raw = bytes.fromhex(essid_hex)
-            ssid = raw.decode("utf-8", errors="ignore") or essid_hex
-        except Exception:
-            ssid = essid_hex
-        return CrackedEntry(ssid=ssid, bssid=bssid, password=password)
+        if len(bssid_hex) != 12 or not password:
+            return None
+        bssid = ":".join(bssid_hex[i:i + 2] for i in range(0, len(bssid_hex), 2)).upper()
+        return CrackedEntry(ssid=essid, bssid=bssid, password=password)
