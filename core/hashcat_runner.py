@@ -121,12 +121,17 @@ class HashcatRunner(QObject):
             self.job_finished.emit(job.original_name, 0)
             return
 
+        self.log.emit(f"Hashcat path: {self.settings.hashcat_path}")
+        self.log.emit(f"CWD: {os.path.dirname(self.settings.hashcat_path)}")
+        self.log.emit(f"Command: {' '.join(cmd)}")
+
         try:
             proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                cwd=os.path.dirname(self.settings.hashcat_path),
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
             for line in proc.stdout:
@@ -182,7 +187,11 @@ class HashcatRunner(QObject):
         ]
         try:
             out = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=30,
+                cmd,
+                cwd=os.path.dirname(self.settings.hashcat_path),
+                capture_output=True,
+                text=True,
+                timeout=30,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
         except Exception as e:
@@ -224,7 +233,8 @@ class HashcatRunner(QObject):
         except Exception:
             bssid = bssid_hex
         try:
-            ssid = bytes.fromhex(essid_hex).decode("utf-8", errors="replace")
+            raw = bytes.fromhex(essid_hex)
+            ssid = raw.decode("utf-8", errors="ignore") or essid_hex
         except Exception:
             ssid = essid_hex
         return CrackedEntry(ssid=ssid, bssid=bssid, password=password)
