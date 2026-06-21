@@ -20,7 +20,7 @@ if errorlevel 1 (
 REM Call PyInstaller as a module rather than a bare command - this works
 REM even if its Scripts folder isn't on PATH (common with the Microsoft
 REM Store build of Python).
-python -m PyInstaller --noconfirm --onefile --windowed --name "PwnGPUCrackServer" main.py
+python -m PyInstaller --noconfirm --onefile --windowed --name "PwnGPUServer" main.py
 if errorlevel 1 (
     echo.
     echo Build FAILED - see errors above.
@@ -29,6 +29,6 @@ if errorlevel 1 (
 )
 
 echo.
-echo Build complete: dist\PwnGPUCrackServer.exe
+echo Build complete: dist\PwnGPUServer.exe
 echo You can copy this single exe to any Windows machine.
 pause
