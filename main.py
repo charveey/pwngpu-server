@@ -25,7 +25,7 @@ def main():
         window.show()
 
     if settings.auto_start_server:
-        window.start_server()
+        window.start_server(silent=True)
 
     sys.exit(app.exec())
 

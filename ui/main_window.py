@@ -122,11 +122,13 @@ class MainWindow(QMainWindow):
         self.monitor.adapter_disconnected.connect(self._on_usb_disconnected)
 
     # -------------------------------------------------------- behaviour ---
-    def start_server(self):
+    def start_server(self, silent=False):
         if self.server_thread and self.server_thread.isRunning():
             return
         self.server_thread = ServerThread(self.settings, self.runner)
-        self.server_thread.started_ok.connect(self._on_server_started)
+        self.server_thread.started_ok.connect(
+            lambda ok, err: self._on_server_started(ok, err, silent)
+        )
         self.server_thread.start()
 
     def stop_server(self):
@@ -138,7 +140,7 @@ class MainWindow(QMainWindow):
         self.stop_btn.setEnabled(False)
         self.toggle_server_action.setText("Start server")
 
-    def _on_server_started(self, ok, err):
+    def _on_server_started(self, ok, err, silent=False):
         if ok:
             self.server_status_label.setText(f"Server: running on port {self.settings.port}")
             self.start_btn.setEnabled(False)
@@ -148,7 +150,8 @@ class MainWindow(QMainWindow):
         else:
             self.server_status_label.setText("Server: failed to start")
             self._append_log(f"[error] could not start server: {err}")
-            QMessageBox.critical(self, "Server error", f"Could not start server:\n{err}")
+            if not silent:
+                QMessageBox.critical(self, "Server error", f"Could not start server:\n{err}")
 
     def _toggle_server(self):
         if self.server_thread and self.server_thread.isRunning():
@@ -194,6 +197,10 @@ class MainWindow(QMainWindow):
             if is_admin():
                 self._configure_ip()
         self._append_log(f"USB adapter detected: {name} ({ip or 'no IP'})")
+        if ip == self.settings.static_ip and self.settings.auto_start_server:
+            if not (self.server_thread and self.server_thread.isRunning()):
+                self._append_log("USB IP ready — starting server.")
+                self.start_server(silent=True)
 
     def _on_usb_disconnected(self, name):
         if self.usb_adapter == name:

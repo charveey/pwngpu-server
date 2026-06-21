@@ -1,4 +1,5 @@
 import logging
+import secrets as secrets_mod
 from flask import Flask, request, jsonify
 from waitress import create_server
 from PyQt6.QtCore import QThread, pyqtSignal
@@ -13,7 +14,7 @@ def create_app(settings, runner):
 
     def _check_key():
         key = request.headers.get("X-API-Key", "")
-        return bool(key) and key == settings.api_key
+        return bool(key) and secrets_mod.compare_digest(key, settings.api_key)
 
     @app.get("/health")
     def health():
@@ -56,7 +57,7 @@ class ServerThread(QThread):
     def run(self):
         app = create_app(self.settings, self.runner)
         try:
-            self._server = create_server(app, host="0.0.0.0", port=self.settings.port)
+            self._server = create_server(app, host=self.settings.static_ip, port=self.settings.port)
         except OSError as e:
             self.started_ok.emit(False, str(e))
             return

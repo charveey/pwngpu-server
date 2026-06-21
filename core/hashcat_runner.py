@@ -5,6 +5,7 @@ import queue
 import logging
 import subprocess
 import threading
+import uuid
 from dataclasses import dataclass
 from PyQt6.QtCore import QObject, pyqtSignal
 
@@ -51,6 +52,8 @@ class HashcatRunner(QObject):
         self._queue = queue.Queue()
         self._stop = threading.Event()
         self._lock = threading.Lock()
+        self._current_proc = None
+        self._proc_lock = threading.Lock()
         self._results = {}          # key -> CrackedEntry
         self._thread = None
         self._load_results()
@@ -69,9 +72,13 @@ class HashcatRunner(QObject):
 
     def _save_results(self):
         path = self.settings.results_path
+        tmp = path + ".tmp"
         try:
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump([e.__dict__ for e in self._results.values()], f, indent=2)
+            with self._lock:
+                data = [e.__dict__ for e in self._results.values()]
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            os.replace(tmp, path)
         except Exception as e:
             logger.warning(f"Could not save results: {e}")
 
@@ -83,16 +90,20 @@ class HashcatRunner(QObject):
 
     def stop(self):
         self._stop.set()
+        with self._proc_lock:
+            if self._current_proc and self._current_proc.poll() is None:
+                self.log.emit("Stopping: killing in-progress hashcat job.")
+                self._current_proc.kill()
 
     def enqueue(self, hash_bytes: bytes, original_name: str):
         """Save the uploaded hash file to disk and queue it for cracking."""
         os.makedirs(self.settings.incoming_dir, exist_ok=True)
         safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", original_name) or "upload.hc22000"
-        path = os.path.join(self.settings.incoming_dir, safe_name)
+        unique_name = f"{uuid.uuid4().hex[:8]}_{safe_name}"
+        path = os.path.join(self.settings.incoming_dir, unique_name)
         with open(path, "wb") as f:
             f.write(hash_bytes)
         self._queue.put(Job(hash_path=path, original_name=original_name))
-        self.queue_size_changed.emit(self._queue.qsize())
 
     def all_results(self):
         with self._lock:
@@ -136,9 +147,13 @@ class HashcatRunner(QObject):
                 stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL,  
                 text=True,
+                bufsize=1,
                 cwd=os.path.dirname(self.settings.hashcat_path),
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
+
+            with self._proc_lock:
+                self._current_proc = proc
 
             killer = threading.Timer(MAX_RUNTIME_SEC, self._kill_proc, args=(proc, job.original_name))
             killer.daemon = True
@@ -158,6 +173,8 @@ class HashcatRunner(QObject):
             self.job_finished.emit(job.original_name, 0)
             return
         finally:
+            with self._proc_lock:
+                self._current_proc = None
             if killer is not None:
                 killer.cancel()
 
@@ -212,6 +229,7 @@ class HashcatRunner(QObject):
                 capture_output=True,
                 text=True,
                 timeout=30,
+                stdin=subprocess.DEVNULL,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
         except Exception as e:
